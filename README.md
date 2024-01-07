@@ -10,7 +10,7 @@ Serial interface for Neato robot vacuum cleaners. Transforms your non-connected 
 
 ## Setup
 - Connect to your step-down voltage regulator to Neato's 16V connection. See image below to find the right connector on the Neato motherboard:
-![direct](assets\neato-16v.jpg?raw=true "16V")
+![direct](assets/neato-16v.jpg?raw=true "16V")
 - Connect the output of the step-down voltage regulator (that should be 5V) to your Raspberry Pi's USB connector for power. Do not use the GPIO to power the Raspberry Pi directly.
 - Connect a mini usb cable from the Raspberry Pi to Neato. 
 - If using a relay:
