@@ -4,10 +4,12 @@ After = network.target
 
 [Service]
 Type=simple
-ExecStart =/usr/bin/python3 /home/pi/neato-serial/neatoserialmqtt.py
-WorkingDirectory=/home/pi/neato-serial
+ExecStart =/usr/bin/python3 /home/admin/neato-serial/neatoserialmqtt.py
+WorkingDirectory=/home/admin/neato-serial
 StandardOutput=syslog
 StandardError=syslog
+Restart=on-failure
+RestartSec=5s
 
 [Install]
 WantedBy = multi-user.target

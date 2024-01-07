@@ -5,14 +5,42 @@ import os
 import time
 import RPi.GPIO as GPIO
 import logging
+import sys
 
+class PrintAndLogLogger(logging.Logger):    
+    def __init__(self, name, level=logging.NOTSET):
+        super(PrintAndLogLogger, self).__init__(name, level)
+
+        # Create a handler for console output
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(self.getLogLevel())  # Set the desired level for console output
+
+        # Create a formatter and add it to the handler
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(formatter)
+
+        # Add the console handler to the logger
+        self.addHandler(console_handler)
+
+        # Add file handler
+        file_handler = logging.FileHandler("neato-debug.log")
+        file_handler.setLevel(self.getLogLevel())
+        file_handler.setFormatter(formatter)
+        self.addHandler(file_handler)
+
+    def getLogLevel(self):
+        if 'log_level_warning' in settings['serial'] and settings['serial']['log_level_warning']:
+            return logging.WARN
+        return logging.DEBUG
 
 class NeatoSerial:
     """Serial interface to Neato."""
-
+    
     def __init__(self):
         """Initialize serial connection to Neato."""
-        self.log = logging.getLogger(__name__)
+        self.isUsbEnabled = True
+        self.log = PrintAndLogLogger(__name__)
+
         if settings['serial']['usb_switch_mode'] == 'relay':
             # use relay to temporarily disconnect neato to trigger clean
             self.pin = int(settings['serial']['relay_gpio'])
@@ -26,20 +54,21 @@ class NeatoSerial:
         """Connect to serial port."""
         devices = settings['serial']['serial_device'].split(',')
         for dev in devices:
+            if not self.isUsbEnabled:
+                self.log.debug("Usb is manually disabled, stop trying to connect.")
+                return False
+            
             try:
                 self.ser = serial.Serial(dev, 115200,
                                          serial.EIGHTBITS, serial.PARITY_NONE,
                                          serial.STOPBITS_ONE,
                                          settings['serial']['timeout_seconds'])
                 self.open()
-                self.log.debug("Connected to Neato at "+dev)
-                print("Connected to Neato at "+dev)
+                self.log.info("Connected to Neato at "+dev)
                 return True
             except:
                 self.log.error("Could not connect to device "+dev+". "
                                + "Trying next device.")
-                print("Could not connect to device "+dev+". "
-                      + "Trying next device.")
         return False
 
     def getIsConnected(self):
@@ -48,20 +77,20 @@ class NeatoSerial:
 
     def open(self):
         """Open serial port and flush the input."""
-        print("Entering OPEN()")
+        self.log.info("Entering OPEN()")
         if self.ser is None:
             return
         else:
             self.ser.isOpen()
             self.ser.flushInput()
-        print("Leaving OPEN()")
+        self.log.info("Leaving OPEN()")
 
     def close(self):
         """Close serial port."""
-        print("Entering CLOSE()")
+        self.log.info("Entering CLOSE()")
         self.ser.close()
         self.isConnected = False
-        print("Leaving CLOSE, isConnected= "+str(self.isConnected))
+        self.log.info("Leaving CLOSE, isConnected= "+str(self.isConnected))
 
     def read_all(self, port, chunk_size=200):
         """Read all characters on the serial port and return them."""
@@ -77,46 +106,53 @@ class NeatoSerial:
                 break
         return read_buffer
 
+    def enableDisableUsb(self, isEnabled):
+        """Enables or disables usb"""
+        if isEnabled:
+            self.log.info("Enabling USB.")
+            self.isUsbEnabled = True
+            GPIO.output(self.pin, GPIO.HIGH)
+        else:
+            self.log.info("Disabling USB.")
+            self.isUsbEnabled = False
+            GPIO.output(self.pin, GPIO.LOW)
+
     def toggleusb(self):
         """Toggle USB connection to Neato."""
-        print("Entering TOGGLEUSB()")
+        self.log.info("Entering TOGGLEUSB()")
         if settings['serial']['usb_switch_mode'] == 'direct':
-            self.log.debug("Direct connection specified.")
-            print("Direct connection specified.")
+            self.log.info("Direct connection specified.")
             # disable and re-enable usb ports to trigger clean
             os.system('sudo ./hub-ctrl -h 0 -P 2 -p 0 ; sleep 1; '
                       + 'sudo ./hub-ctrl -h 0 -P 2 -p 1 ')
         elif settings['serial']['usb_switch_mode'] == 'relay':
-            print("Relay connection specified.")
             self.log.debug("Relay connection specified")
             # use relay to temporarily disconnect neato to trigger clean
             GPIO.output(self.pin, GPIO.LOW)
             time.sleep(1)
             GPIO.output(self.pin, GPIO.HIGH)
-            print("Relay toggled.")
+            self.log.info("Relay toggled.")
         if settings['serial']['reboot_after_usb_switch']:
             os.system('sudo reboot')
-        print("Leaving TOGGLEUSB()")
+        self.log.info("Leaving TOGGLEUSB()")
 
     def reconnect(self):
         """Close and reconnect connection to Neato."""
-        print("Entering RECONNECT()")
+        self.log.info("Entering RECONNECT()")
         self.log.debug("Reconnecting to Neato")
-        print("Reconnecting to Neato")
         self.isConnected = False
         time.sleep(5)
         self.close()
         self.isConnected = self.connect()
         self.open()
-        print("Leaving RECONNECT(),  isConnected = "+str(self.isConnected))
+        self.log.info("Leaving RECONNECT(),  isConnected = "+str(self.isConnected))
 
     def handleCleanMessage(self, msg):
         """Handle sending and extra activities for Clean messages."""
-        print("Entering HANDLECLEANMESSAGE(), msg = "+str(msg))
+        self.log.info("Entering HANDLECLEANMESSAGE(), msg = "+str(msg))
         out = self.raw_write(msg)
         # toggle usb
-        self.log.debug("Message started with 'Clean' so toggling USB")
-        print("Message started with 'Clean' so toggling USB")
+        self.log.info("Message started with 'Clean' so toggling USB")
         self.toggleusb()
         # the device might have changed with the usb toggle,
         # so let's close and reconnect
@@ -129,12 +165,12 @@ class NeatoSerial:
         #    self.log.debug("Resent 'Clean' message so toggling USB")
         #    self.toggleusb()
         #    self.reconnect()
-        print("Leaving HANDLECLEANMESSAGE(), out="+str(out)[:10])
+        self.log.info("Leaving HANDLECLEANMESSAGE(), out="+str(out)[:10])
         return out
 
     def raw_write(self,msg):
         """Write message to serial and return output."""
-        print("Entering RAW_WRITE(), msg = "+str(msg))
+        self.log.info("Entering RAW_WRITE(), msg = "+str(msg))
         out = ''
         if self.isConnected:
             inp = msg+"\n"
@@ -142,38 +178,44 @@ class NeatoSerial:
             time.sleep(1)
             while self.ser.inWaiting() > 0:
                 out += self.read_all(self.ser).decode('utf-8')
-        print("Leaving RAW_WRITE()")
+        self.log.info("Leaving RAW_WRITE()")
         return out
 
     def write(self, msg):
         """Write message to serial and return output. Handles Clean message."""
-        print("Entering WRITE, msg = "+msg)
-        self.log.debug("Message received for writing: "+msg)
+        self.log.info("Entering WRITE, msg = "+msg)
         if self.isConnected:
             # wake up neato by sending something random
             try:
-                print("Sending Wake-up msg.")
+                self.log.info("Sending Wake-up msg.")
                 out = self.raw_write("wake-up")
                 # now send the real message
-                if msg.startswith("Clean"):
+                if msg.lower() == "clean" or msg.lower() == "clean spot":
+                    time.sleep(2)
                     out = self.handleCleanMessage(msg)
                 else:
                     out = self.raw_write(msg)
-                if out is not '':
-                    print("Leaving WRITE(), out = "+str(out)[:10])
+                if out != '':
+                    self.log.info("Leaving WRITE(), out = "+str(out)[:10])
                     return out
             except OSError as ex:
                 self.log.error("Exception in 'write' method: "+str(ex))
-                print("Exception in WRITE(): "+str(ex))
-                print("Calling RECONNECT()")
-                self.reconnect()
+                if not self.isUsbEnabled:
+                    self.log.warn("Planned disconnection of USB → UART occurred, no need to reconnect")
+                    self.close()
+                else:
+                    self.log.info("Calling RECONNECT()")
+                    self.reconnect()
         else:
-            print("Not connected in WRITE() - calling CONNECT()")
-            self.isConnected = self.connect()
+            if self.isUsbEnabled:
+                self.log.info("Not connected in WRITE() - calling CONNECT()")
+                self.isConnected = self.connect()
+            else:
+                self.log.info("Usb is manually disabled, can't communicate yet.");
 
     def getError(self):
         """Return error message if available."""
-        print("Entering GETERROR()")
+        self.log.info("Entering GETERROR()")
         output = self.write("GetErr")
         if output is not None:
             outputsplit = output.split('\r\n')
@@ -181,23 +223,27 @@ class NeatoSerial:
                 err = outputsplit[1]
                 if ' - ' in err:
                     errsplit = err.split(' - ')
-                    # if err is 220 (unplug usb before cleaning) handle it
-                    self.log.debug("Errorcode is 220")
-                    print("Errorcode is 220")
                     if int(errsplit[0]) == 220:
-                        print("Toggling USB")
-                        self.toggleusb()
-                        print("Reconnecting")
-                        self.reconnect()
-                        print("!!!Calling RAW_WRITE('CLEAN').")
+                        # if err is 220 (unplug usb before cleaning) handle it
+                        self.log.info("Errorcode is 220. Let's stop clean and start it fresh")
+                        # Stopping, Clearing Error, in case someone paused it and wants to start again
+                        self.raw_write("Clean Stop")
+                        self.raw_write("GetErr Clear")
                         self.raw_write("Clean")
-                    print("Leaving GETERROR(), errsplit = "+str(errsplit))
+                        self.log.info("Toggling USB")
+                        self.toggleusb()
+                        self.log.info("Reconnecting")
+                        self.reconnect()
+                        # This causes stop while manualy starting neato's clean
+                        #self.log.info("!!!Calling RAW_WRITE('CLEAN').")
+                        #self.raw_write("Clean")
+                    self.log.info("Leaving GETERROR(), errsplit = "+str(errsplit))
                     return errsplit[0], errsplit[1]
             else:
-                print("Leaving GETERROR(), return None since no output split.")
+                self.log.info("Leaving GETERROR(), return None since no output split.")
                 return None
         else:
-            print("Leaving GETERROR(), return None since Output is None.")
+            self.log.info("Leaving GETERROR(), return None since Output is None.")
             return None
 
     def getBatteryLevel(self):
@@ -302,7 +348,7 @@ class NeatoSerial:
 
 if __name__ == '__main__':
     ns = NeatoSerial()
-    print("Enter commands. Enter 'exit' to quit")
+    ns.log.info("Enter commands. Enter 'exit' to quit")
     while 1:
         inp = input("? ")
         if inp == 'exit':
@@ -310,6 +356,6 @@ if __name__ == '__main__':
             exit()
         else:
             try:
-                print(">> "+ns.write(inp))
+                ns.log.info(">> "+ns.write(inp))
             except:
-                print("No result returned.")
+                ns.log.info("No result returned.")
