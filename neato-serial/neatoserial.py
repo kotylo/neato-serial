@@ -150,21 +150,7 @@ class NeatoSerial:
     def handleCleanMessage(self, msg):
         """Handle sending and extra activities for Clean messages."""
         self.log.info("Entering HANDLECLEANMESSAGE(), msg = "+str(msg))
-        out = self.raw_write(msg)
-        # toggle usb
-        self.log.info("Message started with 'Clean' so toggling USB")
-        self.toggleusb()
-        # the device might have changed with the usb toggle,
-        # so let's close and reconnect
-        time.sleep(1)
-        self.reconnect()
-        time.sleep(10)
-        # we might have to send the message twice to start the actual cleaning
-        #if self.getIsConnected() and not self.getCleaning():
-        #    out = self.raw_write(msg)
-        #    self.log.debug("Resent 'Clean' message so toggling USB")
-        #    self.toggleusb()
-        #    self.reconnect()
+        out = self.cleanWithUsbToggle(msg)
         self.log.info("Leaving HANDLECLEANMESSAGE(), out="+str(out)[:10])
         return out
 
@@ -191,7 +177,6 @@ class NeatoSerial:
                 out = self.raw_write("wake-up")
                 # now send the real message
                 if msg.lower() == "clean" or msg.lower() == "clean spot":
-                    time.sleep(2)
                     out = self.handleCleanMessage(msg)
                 else:
                     out = self.raw_write(msg)
@@ -212,6 +197,19 @@ class NeatoSerial:
                 self.isConnected = self.connect()
             else:
                 self.log.info("Usb is manually disabled, can't communicate yet.");
+    
+    def cleanWithUsbToggle(self, msg = None):
+        """Stopping, Clearing Error, in case someone paused it and wants to start again"""
+        self.raw_write("Clean Stop")
+        self.raw_write("GetErr Clear")
+        if msg == None:
+            msg = "Clean"
+        out = self.raw_write(msg)
+        self.log.info("Toggling USB")
+        self.toggleusb()
+        self.log.info("Reconnecting")
+        self.reconnect()
+        return out
 
     def getError(self):
         """Return error message if available."""
@@ -226,17 +224,7 @@ class NeatoSerial:
                     if int(errsplit[0]) == 220:
                         # if err is 220 (unplug usb before cleaning) handle it
                         self.log.info("Errorcode is 220. Let's stop clean and start it fresh")
-                        # Stopping, Clearing Error, in case someone paused it and wants to start again
-                        self.raw_write("Clean Stop")
-                        self.raw_write("GetErr Clear")
-                        self.raw_write("Clean")
-                        self.log.info("Toggling USB")
-                        self.toggleusb()
-                        self.log.info("Reconnecting")
-                        self.reconnect()
-                        # This causes stop while manualy starting neato's clean
-                        #self.log.info("!!!Calling RAW_WRITE('CLEAN').")
-                        #self.raw_write("Clean")
+                        self.cleanWithUsbToggle()
                     self.log.info("Leaving GETERROR(), errsplit = "+str(errsplit))
                     return errsplit[0], errsplit[1]
             else:
@@ -246,27 +234,30 @@ class NeatoSerial:
             self.log.info("Leaving GETERROR(), return None since Output is None.")
             return None
 
-    def getBatteryLevel(self):
+    def getBatteryLevel(self, getChargerResult = None):
         """Return battery level."""
-        charger = self.getCharger()
-        if charger:
-            return int(charger.get("FuelPercent", 0))
+        if getChargerResult == None:
+            getChargerResult = self.getCharger()
+        if getChargerResult:
+            return int(getChargerResult.get("FuelPercent", 0))
         else:
             return 0
 
-    def getChargingActive(self):
+    def getChargingActive(self, getChargerResult = None):
         """Return true if device is currently charging."""
-        charger = self.getCharger()
-        if charger:
-            return bool(int(charger.get("ChargingActive", False)))
+        if getChargerResult == None:
+            getChargerResult = self.getCharger()
+        if getChargerResult:
+            return bool(int(getChargerResult.get("ChargingActive", False)))
         else:
             return False
 
-    def getExtPwrPresent(self):
+    def getExtPwrPresent(self, getChargerResult=None):
         """Return true if device is currently docked."""
-        charger = self.getCharger()
-        if charger:
-            return bool(int(charger.get("ExtPwrPresent", False)))
+        if getChargerResult == None:
+            getChargerResult = self.getCharger()
+        if getChargerResult:
+            return bool(int(getChargerResult.get("ExtPwrPresent", False)))
         else:
             return False
 
@@ -302,17 +293,19 @@ class NeatoSerial:
         """Get motor info."""
         return self.parseOutput(self.write("GetMotors"))
 
-    def getSerialNumber(self):
-        serialNum = self.getVersion()
-        if serialNum:
-            return serialNum.get("Serial Number", "1234")
+    def getSerialNumber(self, getVersionResult=None):
+        if getVersionResult == None:
+            getVersionResult = self.getVersion()
+        if getVersionResult:
+            return getVersionResult.get("Serial Number", "1234")
         else:
             return str(1234)
 
-    def getSoftwareVersion(self):
-        softwareVer = self.getVersion()
-        if softwareVer:
-            return softwareVer.get("MainBoard Software", "1234")
+    def getSoftwareVersion(self, getVersionResult=None):
+        if getVersionResult == None:
+            getVersionResult = self.getVersion()
+        if getVersionResult:
+            return getVersionResult.get("MainBoard Software", "1234")
         else:
             return str(1234)
 
@@ -320,17 +313,18 @@ class NeatoSerial:
         """Get version info."""
         return self.parseOutput(self.write("GetVersion"))
 
-    def getVacuumRPM(self):
+    def getVacuumRPM(self, getMotorsResult = None):
         """Get vacuum RPM."""
-        motors = self.getMotors()
-        if motors:
-            return int(motors.get("Vacuum_RPM", 0))
+        if getMotorsResult == None:
+            getMotorsResult = self.getMotors()
+        if getMotorsResult:
+            return int(getMotorsResult.get("Vacuum_RPM", 0))
         else:
             return 0
 
-    def getCleaning(self):
+    def getCleaning(self, getMotorsResult = None):
         """Return true is device is currently cleaning."""
-        return self.getVacuumRPM() > 0
+        return self.getVacuumRPM(getMotorsResult) > 0
 
     def parseOutput(self, output):
         """Parse the raw output of the serial port into a dictionary."""
@@ -344,7 +338,36 @@ class NeatoSerial:
                 if len(lsplit) > 1:
                     dict[lsplit[0]] = lsplit[1]
             return dict
+        
+    def getCombinedState(self):
+        """Gets combined info by calling methods as few times as possible"""
 
+        getVersionResult = self.getVersion()
+        getChargerResult = self.getCharger()
+        getMotorsResult = self.getMotors()
+
+        combinedState = CombinedState()
+        combinedState.serial_number = self.getSerialNumber(getVersionResult)
+        combinedState.software_version = self.getSoftwareVersion(getVersionResult)
+        combinedState.is_docked = self.getExtPwrPresent(getChargerResult)
+        combinedState.is_cleaning = self.getCleaning(getMotorsResult)
+        combinedState.is_charging = self.getChargingActive(getChargerResult)
+        combinedState.fan_speed = self.getVacuumRPM(getMotorsResult)
+        combinedState.battery_level = self.getBatteryLevel(getChargerResult)
+        combinedState.error = self.getError()
+
+        return combinedState
+
+class CombinedState:
+    def __init__(self):
+        self.serial_number = None 
+        self.software_version: str = None
+        self.is_docked = False
+        self.is_cleaning = False
+        self.is_charging = False
+        self.fan_speed = 0
+        self.battery_level = 0
+        self.error: tuple[str, str] = None
 
 if __name__ == '__main__':
     ns = NeatoSerial()

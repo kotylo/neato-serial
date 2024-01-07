@@ -5,60 +5,53 @@ import json
 import time
 import sys
 import paho.mqtt.client as mqtt
-from neatoserial import NeatoSerial
+from neatoserial import NeatoSerial, CombinedState
 import logging
 from restartMqtt import RestartMqtt
 
 ns = NeatoSerial()
 restartMqtt = RestartMqtt()
-serial_number = ns.getSerialNumber()
-software_version = ns.getSoftwareVersion()
-is_docked = ns.getExtPwrPresent()
-is_cleaning = ns.getCleaning()
-is_charging = ns.getChargingActive()
-fan_speed = ns.getVacuumRPM()
-battery_level = ns.getBatteryLevel()
-error = ns.getError()
+state: CombinedState = None
 
 #Function utilized when MQTT Autodiscovery is used - uses "state" schema in Homeassistant
 def discovery_payload():
     config_data = {
-        'availability': [{'topic': f'neato_serial_{serial_number}/state'}],
+        'availability': [{'topic': f'neato_serial_{state.serial_number}/state'}],
         'command_topic': settings['mqtt']['command_topic'],
         'device': {
-            'identifiers': [f'Neato_serial_{serial_number}'],
+            'identifiers': [f'Neato_serial_{state.serial_number}'],
             'name': 'neato_serial_vacuum',
             'manufacturer': 'Neato Robotics',
             'model': 'XV Series',
-            'sw_version': software_version
+            'sw_version': state.software_version
         },
         'name': 'neato_serial',
-        'unique_id': f'neato_serial_{serial_number}',
+        'unique_id': f'neato_serial_{state.serial_number}',
         'payload_clean_spot': 'Clean Spot',
         'payload_locate': 'PlaySound 19',
         'payload_start': 'Clean',
         'payload_stop': 'Clean Stop',
         'schema': 'state',
         'state_topic': settings['mqtt']['state_topic'],
-        'json_attributes_topic': f'vacuum/neato_serial_{serial_number}/attributes',
+        'json_attributes_topic': f'vacuum/neato_serial_{state.serial_number}/attributes',
         'supported_features': ['start', 'stop', 'battery', 'status', 'locate', 'clean_spot']
     }
     state_data = {}
     attributes_data = {}
-    state_data["battery_level"] = battery_level
+    state_data["battery_level"] = state.battery_level
     if not ns.isUsbEnabled:
         state_data["battery_icon"] = "mdi:battery-unknown"
         
-    state_data["fan_speed"] = fan_speed
-    attributes_data["charging"] = is_charging
+    state_data["fan_speed"] = state.fan_speed
+    attributes_data["charging"] = state.is_charging
     attributes_data["USB Enabled"] = ns.isUsbEnabled
-    if is_docked:
+    if state.is_docked:
         state_data["state"] = "docked"
-    elif is_cleaning:
+    elif state.is_cleaning:
         state_data["state"] = "cleaning"
-    elif error:
-        log.debug(f"Error from Neato: {str(error[1])}")
-        attributes_data["error"] = error[1]
+    elif state.error:
+        log.debug(f"Error from Neato: {str(state.error[1])}")
+        attributes_data["error"] = state.error[1]
         state_data["state"] = "error"
     else:
         state_data["state"] = "idle"
@@ -68,21 +61,21 @@ def discovery_payload():
     json_state_data = json.dumps(state_data)
     json_attributes_data = json.dumps(attributes_data)
     log.debug(f"Sending MQTT Config Message: {str(json_config_data)}")
-    client.publish(settings['mqtt']['discovery_topic'] + f'/vacuum/neato_serial_{serial_number}/config', json_config_data)
+    client.publish(settings['mqtt']['discovery_topic'] + f'/vacuum/neato_serial_{state.serial_number}/config', json_config_data)
     log.debug(f"Sending vacuum state message: {str(json_state_data)}")
     client.publish(settings['mqtt']['state_topic'], json_state_data)
     log.debug(f"Sending vacuum attributes message: {str(json_attributes_data)}")
-    client.publish(f'vacuum/neato_serial_{serial_number}/attributes', json_attributes_data)
+    client.publish(f'vacuum/neato_serial_{state.serial_number}/attributes', json_attributes_data)
     time.sleep(settings['mqtt']['publish_wait_seconds'])
 
 #Function utilized when manual MQTT configuration is used - uses "legacy" schema in Homeassistant
 def legacy_payload():
     legacy_data = {}
-    legacy_data["battery_level"] = battery_level
-    legacy_data["docked"] = is_docked
-    legacy_data["cleaning"] = is_cleaning
-    legacy_data["charging"] = is_charging
-    legacy_data["fan_speed"] = fan_speed
+    legacy_data["battery_level"] = state.battery_level
+    legacy_data["docked"] = state.is_docked
+    legacy_data["cleaning"] = state.is_cleaning
+    legacy_data["charging"] = state.is_charging
+    legacy_data["fan_speed"] = state.fan_speed
     error = ns.getError()
     if error:
         log.debug(f"Error from Neato: {str(error)}")
@@ -92,12 +85,12 @@ def legacy_payload():
     client.publish(settings['mqtt']['state_topic'], json_legacy_data)
     time.sleep(settings['mqtt']['publish_wait_seconds'])
 
-def __publish_status(state: str):
+def __publish_status(publishStatus: str):
     """Publishes the json with status on message received"""
     on_message_data={}
-    on_message_data["battery_level"] = battery_level
-    on_message_data["fan_speed"] = fan_speed
-    on_message_data["state"] = state
+    on_message_data["battery_level"] = state.battery_level
+    on_message_data["fan_speed"] = state.fan_speed
+    on_message_data["state"] = publishStatus
     json_on_message_data = json.dumps(on_message_data)
     #Use secondary client connection to set state to idle before Pi reboots (Can't publish with primary client whithin callback function)
     cleaning_client.publish(settings['mqtt']['state_topic'], json_on_message_data)
@@ -137,7 +130,7 @@ def on_connect(client, userdata, flags, rc):
 def on_disconnect(client, userdata, rc):
     """Handle MQTT client disconnect."""
     #Set availability to offline if disconnected from MQTT Broker
-    cleaning_client.publish(f'neato_serial_{serial_number}/state', 'offline', qos=0, retain=True)
+    cleaning_client.publish(f'neato_serial_{state.serial_number}/state', 'offline', qos=0, retain=True)
     client.loop_stop(force=False)
     if rc != 0:
         log.info("Unexpected disconnection.")
@@ -195,21 +188,14 @@ while True:
     #if not ns.getIsConnected():
     #    ns.reconnect()
     if ns.isUsbEnabled:
-        serial_number = ns.getSerialNumber()
-        software_version = ns.getSoftwareVersion()
-        is_docked = ns.getExtPwrPresent()
-        is_cleaning = ns.getCleaning()
-        is_charging = ns.getChargingActive()
-        fan_speed = ns.getVacuumRPM()
-        battery_level = ns.getBatteryLevel()                                                                  
-        error = ns.getError()
+        state = ns.getCombinedState()
         restartMqtt.checkAndRestart()
     #Determine whether end-user is using MQTT Autodiscovery or Manual configuration
     if 'discovery_topic' in settings['mqtt']:
-        client.publish(f'neato_serial_{serial_number}/state', 'online', qos=0, retain=True)
+        client.publish(f'neato_serial_{state.serial_number}/state', 'online', qos=0, retain=True)
         discovery_payload()
     else:
-        client.publish(f'neato_serial_{serial_number}/state', 'online', qos=0, retain=True)
+        client.publish(f'neato_serial_{state.serial_number}/state', 'online', qos=0, retain=True)
         legacy_payload()
         # except Exception as ex:
         #     log.error("Error getting status: "+str(ex))
