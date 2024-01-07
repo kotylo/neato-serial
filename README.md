@@ -10,7 +10,7 @@ Serial interface for Neato robot vacuum cleaners. Transforms your non-connected 
 
 ## Setup
 - Connect to your step-down voltage regulator to Neato's 16V connection. See image below to find the right connector on the Neato motherboard:
-![direct](neato-16v.jpg?raw=true "16V")
+![direct](assets\neato-16v.jpg?raw=true "16V")
 - Connect the output of the step-down voltage regulator (that should be 5V) to your Raspberry Pi's USB connector for power. Do not use the GPIO to power the Raspberry Pi directly.
 - Connect a mini usb cable from the Raspberry Pi to Neato. 
 - If using a relay:
@@ -28,7 +28,7 @@ Serial interface for Neato robot vacuum cleaners. Transforms your non-connected 
  
  **Wiring**
  * Remove the two wires from the Neato's 16V connector and solder an additional wire to each of the pins. Place the wires back into the connector (See image below).
- ![direct](Neato-16V-Soldered.jpg?raw=true "16V-S")
+ ![direct](assets/Neato-16V-Soldered.jpg?raw=true "16V-S")
  * Voltage-Regulator Wiring:
    * If using the voltage-regulator mentioned above, be sure to remove the pot and solder the 5V pads on the back of voltage-regulator. 
    * Solder the live wire (red wire) from Neato's 16V connector (previous step) to the port labeled `IN+` on the voltage-regulator.
@@ -37,13 +37,13 @@ Serial interface for Neato robot vacuum cleaners. Transforms your non-connected 
    * Solder an additional wire to the port labeled `GND` on the voltage-regulator and the other end to the test point labeled `PP6` on the underside of the Raspberry Pi ZeroW (see image below).
    * Solder a wire to the port labeled `VO+` on the voltage-regulator and the other end to the test point labeled `PP1` on the underside of the Raspberry Pi ZeroW (see image below).
    * The port labeled `EN` on the voltage-regulator will not be used
-   * ![direct](pi-zerow-test-points.jpeg?raw=true "ZeroW-Test-Points")
+   * ![direct](assets/pi-zerow-test-points.jpeg?raw=true "ZeroW-Test-Points")
  * Wiring Raspberry Pi ZeroW to Relay
    * You can either use dupont connectors to connect the Pi to the relay or solder wires to the pins on the underside of the Pi.
    * Connect your relay to the 5V, GND and GPIO 2 of your Raspberry Pi. If you use another GPIO make sure to reflect that in the configuration file (see `Configuration` Section). If using a relay with screw-terminals, I recommend using ferules on the ends of the wires going into the relay screw terminals. Also, be sure to use enough wire length to allow the wires to reach from the upper-left side of the motherboard where the Pi will sit to a hole near the left wheel where the relay will sit (See image below).
    * Solder another wire (preferably red) to the test point labeled `PP1` on the underside of the Raspberry Pi ZeroW and place the other end into the `COM` port of the relay.
    * We will come back to the relay in the next steps.
-   * ![direct](neato-disassembled.jpeg?raw=true "Neato-Disassembled")
+   * ![direct](assets/neato-disassembled.jpeg?raw=true "Neato-Disassembled")
  * Wiring Pi ZeroW MicroUSB port to Neato's MiniUSB port:
    * **Warning**: When soldering to the pads on Neato's motherboard, DO NOT use high heat as these pads are weak and will pull off of the motherboard if not handled with care. Also, add some hot glue to the top of the wires/connections (once all 3 soldered connections are made) to help alleviate wire strain and prevent the pads from getting pulled up.
    * If you are using JST connectors that I mentioned in the hardware section, choose either a male or female connector for the Raspberry Pi side and the opposite for Neato side ( Female connector on Pi & Male connector on Neato side **or** Male connector on Pi & Female connector on Neato side).
@@ -60,10 +60,10 @@ Serial interface for Neato robot vacuum cleaners. Transforms your non-connected 
      - Solder a wire (preferably white) to the small round pad above the component labeled `D13` (pad labeled as `D-` in image below). Solder the other side of the wire to the test point labeled `PP23` on the underside of the Raspberry Pi ZeroW (image of test points located above)
      - Solder a wire (preferably red) to the right-side of the resistor labeled `R90` (labeled as `VCC` in image below). Insert the other end of this wire into the relay port labeled `NO`
      - Be sure to add hot glue to the connections at the Neato's motherboard to alleviate wire strain and prevent pads from lifting
-    * ![direct](neato-miniusb.jpg?raw=true "Neato-MiniUSB")
+    * ![direct](assets/neato-miniusb.jpg?raw=true "Neato-MiniUSB")
  * Wrapping up:
    * Cover the underside of the Raspberry Pi ZeroW and the entire voltage-regulator with Kapton tape to prevent any shorts from occuring.
-   * ![direct](pi-kapton.jpg?raw=true "Pi-Kapton") ![direct](voltage-regulator-kapton.jpg?raw=true "VR-Kapton")     
+   * ![direct](assets/pi-kapton.jpg?raw=true "Pi-Kapton") ![direct](assets/voltage-regulator-kapton.jpg?raw=true "VR-Kapton")     
  
 
 ## Installation
@@ -83,11 +83,11 @@ Configuration values:
   
     Options: `direct` or `relay`:
     - **direct**. Tested on Raspberry Pi 2 and 3. Does _not_ work on Raspberry Pi zero since usb port cannot be turned off - use **relay** instead. Connect your Pi and Neato directly using an USB cable:
-![direct](raspberrypi-neato-direct.jpg?raw=true "Direct")
+![direct](assets/raspberrypi-neato-direct.jpg?raw=true "Direct")
   
       This option does require elevated permissions (`sudo`) for the script since it needs to disable the usb port and (depending on config) reboot the Pi.
     - **relay**. Switches the USB connection using a relay. Tested to work on Raspberry Pi zero and others. This is the only method that works on Raspberry Pi zero. Be sure to also specify the GPIO the relay is connected to with `relay_gpio`. Connect a 5V relay to your Raspberry Pi. Cut your USB wire and re-connect all the cables except the red one. Wire the red cable through the relay (one side into `Common` and the other into `NO` if you have three connectors on your relay). I used a [Grove Relay from Seeed](http://wiki.seeedstudio.com/Grove-Relay/) but any relay should do.
-    ![direct](raspberrypi-neato-relay.jpg?raw=true "Relay")
+    ![direct](assets/raspberrypi-neato-relay.jpg?raw=true "Relay")
         
     Example value: `direct`
   - *relay_gpio*: specifies the GPIO the relay is connected to when using `usb_switch_mode: relay`.
@@ -143,7 +143,7 @@ vacuum:
   ```
 
 ## Commands
-See [the Neato programmers manual](XV-ProgrammersManual-3_1.pdf) for available commands.
+See [the Neato programmers manual](assets/XV-ProgrammersManual-3_1.pdf) for available commands.
 It seems that some commands are not listed in the manual:
 
     - `Clean Stop` stops the vacuum.
