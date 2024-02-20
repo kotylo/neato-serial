@@ -179,7 +179,6 @@ cleaning_client.connect(settings['mqtt']['host'], settings['mqtt']['port'])
 client.subscribe(settings['mqtt']['command_topic'], qos=1)
 log.debug("Setting up serial")
 
-
 log.debug("Ready")
 client.loop_start()
 cleaning_client.loop_start()

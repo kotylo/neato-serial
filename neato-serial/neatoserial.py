@@ -39,6 +39,7 @@ class NeatoSerial:
     def __init__(self):
         """Initialize serial connection to Neato."""
         self.isUsbEnabled = True
+        self.errorConnectingCount = 0
         self.log = PrintAndLogLogger(__name__)
 
         if settings['serial']['usb_switch_mode'] == 'relay':
@@ -65,10 +66,18 @@ class NeatoSerial:
                                          settings['serial']['timeout_seconds'])
                 self.open()
                 self.log.info("Connected to Neato at "+dev)
+                self.errorConnectingCount = 0
                 return True
             except:
                 self.log.error("Could not connect to device "+dev+". "
                                + "Trying next device.")
+                self.errorConnectingCount += 1
+                time.sleep(1)
+
+        # Reboot RaspberryPi in case lots of connection errors:
+        if self.errorConnectingCount > 100:
+            self.reboot()
+
         return False
 
     def getIsConnected(self):
@@ -117,6 +126,10 @@ class NeatoSerial:
             self.isUsbEnabled = False
             GPIO.output(self.pin, GPIO.LOW)
 
+    def reboot(self):
+        """Reboots RaspberryPi"""
+        os.system('sudo reboot')
+
     def toggleusb(self):
         """Toggle USB connection to Neato."""
         self.log.info("Entering TOGGLEUSB()")
@@ -133,7 +146,7 @@ class NeatoSerial:
             GPIO.output(self.pin, GPIO.HIGH)
             self.log.info("Relay toggled.")
         if settings['serial']['reboot_after_usb_switch']:
-            os.system('sudo reboot')
+            self.reboot()
         self.log.info("Leaving TOGGLEUSB()")
 
     def reconnect(self):
