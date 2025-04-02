@@ -87,6 +87,10 @@ def legacy_payload():
 
 def __publish_status(publishStatus: str):
     """Publishes the json with status on message received"""
+    if state is None:
+        log.warning(f"While publising status '{publishStatus}', the state was None, so not publishing.")
+        return
+    
     on_message_data={}
     on_message_data["battery_level"] = state.battery_level
     on_message_data["fan_speed"] = state.fan_speed
@@ -124,6 +128,7 @@ def on_connect(client, userdata, flags, rc):
     """Broker responded to connection request"""
     if rc == 0:
         log.info("Connection to broker successful")
+        client.subscribe(settings['mqtt']['command_topic'], qos=1)
     else:
         log.info("Problem connecting to broker")
 
@@ -131,11 +136,21 @@ def on_disconnect(client, userdata, rc):
     """Handle MQTT client disconnect."""
     #Set availability to offline if disconnected from MQTT Broker
     cleaning_client.publish(f'neato_serial_{state.serial_number}/state', 'offline', qos=0, retain=True)
-    client.loop_stop(force=False)
+    
+    log.warning(f"Disconnected with code {rc}, attempting to reconnect...")
+    
     if rc != 0:
-        log.info("Unexpected disconnection.")
+        log.info("Unexpected disconnection. Reconnecting...")
+        while True:
+            try:
+                client.reconnect()
+                break
+            except Exception as e:
+                log.error(f"Reconnect failed: {e}")
+                time.sleep(5)  # Wait before retrying
     else:
-        log.info("Disconnected.")
+        log.info("Disconnected normally. Not trying to reconnect.")
+        client.loop_stop(force=False)
 
 # def on_publish(client, userdata, mid):
 #     log.debug("on_publish, mid {}".format(mid))
@@ -176,9 +191,6 @@ cleaning_client.username_pw_set(settings['mqtt']['username'],
 log.debug("Connecting")
 client.connect(settings['mqtt']['host'], settings['mqtt']['port'])
 cleaning_client.connect(settings['mqtt']['host'], settings['mqtt']['port'])
-client.subscribe(settings['mqtt']['command_topic'], qos=1)
-log.debug("Setting up serial")
-
 log.debug("Ready")
 client.loop_start()
 cleaning_client.loop_start()

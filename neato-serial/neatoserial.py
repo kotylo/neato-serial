@@ -199,7 +199,7 @@ class NeatoSerial:
             except OSError as ex:
                 self.log.error("Exception in 'write' method: "+str(ex))
                 if not self.isUsbEnabled:
-                    self.log.warn("Planned disconnection of USB → UART occurred, no need to reconnect")
+                    self.log.warning("Planned disconnection of USB → UART occurred, no need to reconnect")
                     self.close()
                 else:
                     self.log.info("Calling RECONNECT()")
