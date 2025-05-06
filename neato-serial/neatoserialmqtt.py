@@ -7,6 +7,7 @@ import sys
 import paho.mqtt.client as mqtt
 from neatoserial import NeatoSerial, CombinedState
 import logging
+import threading
 from restartMqtt import RestartMqtt
 
 ns = NeatoSerial()
@@ -135,22 +136,29 @@ def on_connect(client, userdata, flags, rc):
 def on_disconnect(client, userdata, rc):
     """Handle MQTT client disconnect."""
     #Set availability to offline if disconnected from MQTT Broker
-    cleaning_client.publish(f'neato_serial_{state.serial_number}/state', 'offline', qos=0, retain=True)
-    
-    log.warning(f"Disconnected with code {rc}, attempting to reconnect...")
-    
-    if rc != 0:
-        log.info("Unexpected disconnection. Reconnecting...")
-        while True:
-            try:
-                client.reconnect()
-                break
-            except Exception as e:
-                log.error(f"Reconnect failed: {e}")
-                time.sleep(5)  # Wait before retrying
-    else:
-        log.info("Disconnected normally. Not trying to reconnect.")
-        client.loop_stop(force=False)
+    try:
+        cleaning_client.publish(f'neato_serial_{state.serial_number}/state', 'offline', qos=0, retain=True)
+        
+        log.warning(f"Disconnected with code {rc}, attempting to reconnect...")
+        
+        if rc != 0:
+            def reconnect_forever():
+                while True:
+                    try:
+                        client.reconnect()
+                        log.info("Reconnected successfully.")
+                        return  # Done reconnecting
+                    except Exception as e:
+                        log.error(f"Reconnect failed: {e}")
+                        time.sleep(30)
+
+            # Start the reconnect thread so we don't block the main thread
+            threading.Thread(target=reconnect_forever, daemon=True).start()
+        else:
+            log.info("Disconnected normally. Not trying to reconnect.")
+            client.loop_stop(force=False)
+    except Exception as outer_exc:
+        log.exception(f"Exception on_disconnect: {outer_exc}")
 
 # def on_publish(client, userdata, mid):
 #     log.debug("on_publish, mid {}".format(mid))
