@@ -4,6 +4,7 @@ from config import settings
 import json
 import time
 import sys
+# Requires: paho-mqtt (see requirements.txt)
 import paho.mqtt.client as mqtt
 from neatoserial import NeatoSerial, CombinedState
 import logging
@@ -14,18 +15,23 @@ ns = NeatoSerial()
 restartMqtt = RestartMqtt()
 state: CombinedState = None
 
+
+def ha_device_dict():
+    """Common HA MQTT device block shared by all entities for this robot."""
+    return {
+        'identifiers': [f'Neato_serial_{state.serial_number}'],
+        'name': 'neato_serial_vacuum',
+        'manufacturer': 'Neato Robotics',
+        'model': 'XV Series',
+        'sw_version': state.software_version
+    }
+
 #Function utilized when MQTT Autodiscovery is used - uses "state" schema in Homeassistant
 def discovery_payload():
     config_data = {
         'availability': [{'topic': f'neato_serial_{state.serial_number}/state'}],
         'command_topic': settings['mqtt']['command_topic'],
-        'device': {
-            'identifiers': [f'Neato_serial_{state.serial_number}'],
-            'name': 'neato_serial_vacuum',
-            'manufacturer': 'Neato Robotics',
-            'model': 'XV Series',
-            'sw_version': state.software_version
-        },
+        'device': ha_device_dict(),
         'name': 'neato_serial',
         'unique_id': f'neato_serial_{state.serial_number}',
         'payload_clean_spot': 'Clean Spot',
@@ -35,7 +41,7 @@ def discovery_payload():
         'schema': 'state',
         'state_topic': settings['mqtt']['state_topic'],
         'json_attributes_topic': f'vacuum/neato_serial_{state.serial_number}/attributes',
-        'supported_features': ['start', 'stop', 'battery', 'status', 'locate', 'clean_spot']
+        'supported_features': ['start', 'stop', 'status', 'locate', 'clean_spot']
     }
     state_data = {}
     attributes_data = {}
@@ -67,24 +73,41 @@ def discovery_payload():
     client.publish(settings['mqtt']['state_topic'], json_state_data)
     log.debug(f"Sending vacuum attributes message: {str(json_attributes_data)}")
     client.publish(f'vacuum/neato_serial_{state.serial_number}/attributes', json_attributes_data)
+
+    # Publish extra sub-entities via MQTT Discovery (e.g., Battery sensor)
+    publish_battery_discovery_and_state()
     time.sleep(settings['mqtt']['publish_wait_seconds'])
 
-#Function utilized when manual MQTT configuration is used - uses "legacy" schema in Homeassistant
-def legacy_payload():
-    legacy_data = {}
-    legacy_data["battery_level"] = state.battery_level
-    legacy_data["docked"] = state.is_docked
-    legacy_data["cleaning"] = state.is_cleaning
-    legacy_data["charging"] = state.is_charging
-    legacy_data["fan_speed"] = state.fan_speed
-    error = ns.getError()
-    if error:
-        log.debug(f"Error from Neato: {str(error)}")
-        legacy_data["error"] = error[1]
-    json_legacy_data = json.dumps(legacy_data)
-    log.debug(f"Sending vacuum state message: {str(json_legacy_data)}")
-    client.publish(settings['mqtt']['state_topic'], json_legacy_data)
-    time.sleep(settings['mqtt']['publish_wait_seconds'])
+
+def publish_battery_discovery_and_state():
+    """Publishes a separate HA MQTT Discovery sensor for battery_level.
+
+    This creates a *new* entity (sensor) that is grouped under the same HA device
+    as the vacuum by using the same `device.identifiers`.
+    """
+    if state is None:
+        return
+
+    discovery_prefix = settings['mqtt']['discovery_topic']
+    device_id = f"neato_serial_{state.serial_number}"
+
+    battery_state_topic = f"sensor/{device_id}/battery"
+    battery_config_topic = f"{discovery_prefix}/sensor/{device_id}/battery/config"
+
+    battery_config = {
+        'availability': [{'topic': f'{device_id}/state'}],
+        'device': ha_device_dict(),
+        'name': 'Battery',
+        'unique_id': f'{device_id}_battery',
+        'state_topic': battery_state_topic,
+        'device_class': 'battery',
+        'unit_of_measurement': '%',
+        'icon': 'mdi:battery',
+        'state_class': 'measurement'
+    }
+
+    client.publish(battery_config_topic, json.dumps(battery_config), qos=0, retain=True)
+    client.publish(battery_state_topic, str(state.battery_level), qos=0, retain=True)
 
 def __publish_status(publishStatus: str):
     """Publishes the json with status on message received"""
@@ -99,6 +122,14 @@ def __publish_status(publishStatus: str):
     json_on_message_data = json.dumps(on_message_data)
     #Use secondary client connection to set state to idle before Pi reboots (Can't publish with primary client whithin callback function)
     cleaning_client.publish(settings['mqtt']['state_topic'], json_on_message_data)
+
+    # Keep battery sensor state fresh when commands are processed
+    if state is not None and 'discovery_topic' in settings['mqtt']:
+        try:
+            device_id = f"neato_serial_{state.serial_number}"
+            cleaning_client.publish(f"sensor/{device_id}/battery", str(state.battery_level), qos=0, retain=True)
+        except Exception as ex:
+            log.debug(f"Unable to publish battery sensor state: {ex}")
 
 def on_message(client, userdata, msg):
     """Message received."""
@@ -128,10 +159,10 @@ def on_message(client, userdata, msg):
 def on_connect(client, userdata, flags, rc):
     """Broker responded to connection request"""
     if rc == 0:
-        log.info("Connection to broker successful")
+        log.warning("Connection to broker successful")
         client.subscribe(settings['mqtt']['command_topic'], qos=1)
     else:
-        log.info("Problem connecting to broker")
+        log.warning("Problem connecting to broker")
 
 def on_disconnect(client, userdata, rc):
     """Handle MQTT client disconnect."""
@@ -145,19 +176,23 @@ def on_disconnect(client, userdata, rc):
             def reconnect_forever():
                 while True:
                     try:
+                        log.warning("Reconnecting...")
                         client.reconnect()
-                        log.info("Reconnected successfully.")
+                        log.warning("Reconnected successfully.")
                         return  # Done reconnecting
                     except Exception as e:
                         log.error(f"Reconnect failed: {e}")
                         time.sleep(30)
 
             # Start the reconnect thread so we don't block the main thread
+            log.warning(f"Starting thread for reconnection")
             threading.Thread(target=reconnect_forever, daemon=True).start()
+            log.warning(f"Starting thread for reconnection... Done")
         else:
-            log.info("Disconnected normally. Not trying to reconnect.")
+            log.warning("Disconnected normally. Not trying to reconnect.")
             client.loop_stop(force=False)
     except Exception as outer_exc:
+        log.warning("Exception while reconnecting...")
         log.exception(f"Exception on_disconnect: {outer_exc}")
 
 # def on_publish(client, userdata, mid):
@@ -209,15 +244,9 @@ while True:
     if ns.isUsbEnabled:
         state = ns.getCombinedState()
         restartMqtt.checkAndRestart()
-    #Determine whether end-user is using MQTT Autodiscovery or Manual configuration
-    if 'discovery_topic' in settings['mqtt']:
-        client.publish(f'neato_serial_{state.serial_number}/state', 'online', qos=0, retain=True)
-        discovery_payload()
-    else:
-        client.publish(f'neato_serial_{state.serial_number}/state', 'online', qos=0, retain=True)
-        legacy_payload()
-        # except Exception as ex:
-        #     log.error("Error getting status: "+str(ex))
     
+    client.publish(f'neato_serial_{state.serial_number}/state', 'online', qos=0, retain=True)
+    discovery_payload()
+
     # Sleep our loop
     time.sleep(2)
