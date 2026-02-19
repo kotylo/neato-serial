@@ -16,6 +16,29 @@ restartMqtt = RestartMqtt()
 state: CombinedState = None
 
 
+def _battery_icon(percent: int, is_charging: bool) -> str:
+    if percent is None:
+        return "mdi:battery-unknown"
+
+    try:
+        level = int(percent)
+    except (TypeError, ValueError):
+        return "mdi:battery-unknown"
+
+    if level < 0:
+        level = 0
+    if level > 100:
+        level = 100
+
+    bucket = (level // 10) * 10
+    if bucket == 0:
+        bucket = 10
+
+    if is_charging:
+        return f"mdi:battery-charging-{bucket}"
+    return f"mdi:battery-{bucket}"
+
+
 def ha_device_dict():
     """Common HA MQTT device block shared by all entities for this robot."""
     return {
@@ -76,6 +99,7 @@ def discovery_payload():
 
     # Publish extra sub-entities via MQTT Discovery (e.g., Battery sensor)
     publish_battery_discovery_and_state()
+    publish_error_discovery_and_state()
     time.sleep(settings['mqtt']['publish_wait_seconds'])
 
 
@@ -93,6 +117,8 @@ def publish_battery_discovery_and_state():
 
     battery_state_topic = f"sensor/{device_id}/battery"
     battery_config_topic = f"{discovery_prefix}/sensor/{device_id}/battery/config"
+    charging_state_topic = f"binary_sensor/{device_id}/battery_charging"
+    charging_config_topic = f"{discovery_prefix}/binary_sensor/{device_id}/battery_charging/config"
 
     battery_config = {
         'availability': [{'topic': f'{device_id}/state'}],
@@ -106,8 +132,49 @@ def publish_battery_discovery_and_state():
         'state_class': 'measurement'
     }
 
+    charging_config = {
+        'availability': [{'topic': f'{device_id}/state'}],
+        'device': ha_device_dict(),
+        'name': 'Battery Charging',
+        'unique_id': f'{device_id}_battery_charging',
+        'state_topic': charging_state_topic,
+        'device_class': 'battery_charging'
+    }
+
+    if not ns.isUsbEnabled:
+        battery_config['icon'] = "mdi:battery-unknown"
+    else:
+        battery_config['icon'] = _battery_icon(state.battery_level, state.is_charging)
+
     client.publish(battery_config_topic, json.dumps(battery_config), qos=0, retain=True)
     client.publish(battery_state_topic, str(state.battery_level), qos=0, retain=True)
+    client.publish(charging_config_topic, json.dumps(charging_config), qos=0, retain=True)
+    client.publish(charging_state_topic, 'ON' if state.is_charging else 'OFF', qos=0, retain=True)
+
+
+def publish_error_discovery_and_state():
+    """Publishes a separate HA MQTT Discovery sensor for error text."""
+    if state is None:
+        return
+
+    discovery_prefix = settings['mqtt']['discovery_topic']
+    device_id = f"neato_serial_{state.serial_number}"
+
+    error_state_topic = f"sensor/{device_id}/error"
+    error_config_topic = f"{discovery_prefix}/sensor/{device_id}/error/config"
+
+    error_config = {
+        'availability': [{'topic': f'{device_id}/state'}],
+        'device': ha_device_dict(),
+        'name': 'Error',
+        'unique_id': f'{device_id}_error',
+        'state_topic': error_state_topic,
+        'icon': 'mdi:alert-circle'
+    }
+
+    error_value = state.error[1] if state.error else 'none'
+    client.publish(error_config_topic, json.dumps(error_config), qos=0, retain=True)
+    client.publish(error_state_topic, str(error_value), qos=0, retain=True)
 
 def __publish_status(publishStatus: str):
     """Publishes the json with status on message received"""
@@ -128,6 +195,18 @@ def __publish_status(publishStatus: str):
         try:
             device_id = f"neato_serial_{state.serial_number}"
             cleaning_client.publish(f"sensor/{device_id}/battery", str(state.battery_level), qos=0, retain=True)
+            cleaning_client.publish(
+                f"binary_sensor/{device_id}/battery_charging",
+                'ON' if state.is_charging else 'OFF',
+                qos=0,
+                retain=True
+            )
+            cleaning_client.publish(
+                f"sensor/{device_id}/error",
+                str(state.error[1] if state.error else 'none'),
+                qos=0,
+                retain=True
+            )
         except Exception as ex:
             log.debug(f"Unable to publish battery sensor state: {ex}")
 
